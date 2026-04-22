@@ -38,6 +38,11 @@ except:
 agent = AgentService(os.getenv("OPENAI_API_KEY"), engine, memory)
 voice = VoiceService(os.getenv("DEEPGRAM_API_KEY"))
 
+@app.get("/")
+async def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/web/index.html")
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
