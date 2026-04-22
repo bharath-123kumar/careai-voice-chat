@@ -4,7 +4,7 @@ import json
 import time
 
 async def test_agent():
-    uri = "ws://localhost:8080/ws/voice"
+    uri = "ws://localhost:8989/ws/voice"
     async with websockets.connect(uri) as websocket:
         print("--- Connected to Clinical Voice AI Agent ---")
         print("Type your request below (e.g. 'Book cardiology appointment')")

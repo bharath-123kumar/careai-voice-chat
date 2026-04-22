@@ -16,7 +16,9 @@ class AgentService:
         Your goal is to book, reschedule, or cancel appointments.
         """
 
-    async def handle_request(self, session_id, patient_id, user_input, history=[]):
+    async def handle_request(self, session_id, patient_id, user_input, history=None):
+        if history is None:
+            history = []
         user_input_lower = user_input.lower()
         context = self.memory.get_session_context(session_id)
         current_state = context.get("mock_state", "START")
@@ -52,12 +54,81 @@ class AgentService:
         messages.append({"role": "user", "content": user_input})
 
         tools = [
-            {"type": "function", "function": {"name": "get_doctors", "parameters": {"type": "object", "properties": {"specialty": {"type": "string"}}}}}
+            {
+                "type": "function", 
+                "function": {
+                    "name": "get_doctors", 
+                    "description": "Get a list of available doctors and their specialties",
+                    "parameters": {
+                        "type": "object", 
+                        "properties": {
+                            "specialty": {"type": "string", "description": "The medical specialty to filter by"}
+                        }
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "book_appointment",
+                    "description": "Book a new appointment for a patient",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "doctor_id": {"type": "integer"},
+                            "appointment_time": {"type": "string", "format": "date-time"}
+                        },
+                        "required": ["doctor_id", "appointment_time"]
+                    }
+                }
+            }
         ]
 
-        response = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            tools=tools
-        )
-        return response.choices[0].message.content
+        try:
+            response = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                tools=tools,
+                tool_choice="auto"
+            )
+            
+            message = response.choices[0].message
+            
+            if message.tool_calls:
+                # Handle tool calls
+                for tool_call in message.tool_calls:
+                    function_name = tool_call.function.name
+                    args = json.loads(tool_call.function.arguments)
+                    
+                    if function_name == "get_doctors":
+                        # Mock doctor list
+                        doctors = [
+                            {"id": 1, "name": "Dr. Sharma", "specialty": "Cardiology"},
+                            {"id": 2, "name": "Dr. Priya", "specialty": "Dermatology"}
+                        ]
+                        tool_result = json.dumps(doctors)
+                    elif function_name == "book_appointment":
+                        tool_result = json.dumps({"status": "success", "message": "Appointment booked successfully"})
+                    else:
+                        tool_result = "Function not found"
+
+                    messages.append(message)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": function_name,
+                        "content": tool_result
+                    })
+
+                # Get final response after tool execution
+                second_response = await self.client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages
+                )
+                return second_response.choices[0].message.content
+            
+            return message.content or "I'm sorry, I couldn't process that. How can I help you?"
+        except Exception as e:
+            print(f"Error in Agent reasoning: {e}")
+            return f"I encountered an error while processing your request. (Error: {str(e)})"
+

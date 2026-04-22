@@ -49,21 +49,46 @@
 
         // Initialize Webhook
         function initWebSocket() {
-            ws = new WebSocket(`ws://${window.location.hostname}:8989/ws/voice`);
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const host = window.location.hostname || 'localhost';
+            const port = '8989';
             
+            console.log(`Connecting to ${protocol}//${host}:${port}/ws/voice`);
+            ws = new WebSocket(`${protocol}//${host}:${port}/ws/voice`);
+            ws.binaryType = 'arraybuffer';
+            
+            ws.onopen = () => {
+                console.log("WebSocket connected");
+                document.getElementById('conn-status').innerText = "Systems Ready";
+                document.getElementById('conn-status').parentElement.style.opacity = "1";
+            };
+
             ws.onmessage = async (event) => {
                 if (typeof event.data === 'string') {
                     const data = JSON.parse(event.data);
                     if (data.type === 'text') {
                         addMessage(data.content, 'agent', data.reasoning_ms, data.total_ms);
-                        speakText(data.content); // Call TTS
+                        if (!data.has_audio) {
+                            speakText(data.content); // Use browser TTS if no server audio
+                        }
                     } else if (data.type === 'latency') {
                         updateLatency(data.total_ms);
                     }
                 } else {
-                    // Audio binary data
+                    // Audio binary data (ArrayBuffer)
                     playAudio(event.data);
                 }
+            };
+
+            ws.onclose = () => {
+                console.log("WebSocket disconnected");
+                document.getElementById('conn-status').innerText = "Disconnected (Retrying...)";
+                document.getElementById('conn-status').style.color = "#f59e0b";
+                setTimeout(initWebSocket, 3000); // Reconnect after 3s
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket Error:", err);
             };
         }
 
@@ -85,15 +110,19 @@
         }
 
         function updateLatency(ms) {
-            const lastLatency = chatContainer.querySelector('.chat-bubble.agent:last-child #total-latency');
-            if (lastLatency) lastLatency.innerText = `Total: ${ms}ms`;
+            const agentBubbles = chatContainer.querySelectorAll('.chat-bubble.agent');
+            if (agentBubbles.length > 0) {
+                const lastLatency = agentBubbles[agentBubbles.length - 1].querySelector('#total-latency');
+                if (lastLatency) lastLatency.innerText = `Total: ${ms}ms`;
+            }
         }
 
         // Web Speech API for Speaking (TTS Fallback)
         function speakText(text) {
             if ('speechSynthesis' in window) {
+                // Cancel any ongoing speech
+                window.speechSynthesis.cancel();
                 const utterance = new SpeechSynthesisUtterance(text);
-                // Detect language for better voice selection
                 utterance.lang = 'en-IN'; 
                 window.speechSynthesis.speak(utterance);
             }
@@ -101,13 +130,20 @@
 
         // Web Audio for playback (Binary chunks)
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        function playAudio(buffer) {
-            audioCtx.decodeAudioData(buffer, (decoded) => {
+        
+        async function playAudio(buffer) {
+            try {
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+                const decoded = await audioCtx.decodeAudioData(buffer);
                 const source = audioCtx.createBufferSource();
                 source.buffer = decoded;
                 source.connect(audioCtx.destination);
                 source.start();
-            });
+            } catch (e) {
+                console.error("Audio Playback Error:", e);
+            }
         }
 
         // Web Speech API for Real Mic Input

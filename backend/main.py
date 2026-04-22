@@ -69,21 +69,25 @@ async def voice_endpoint(websocket: WebSocket):
             
             # 1. Agent Reasoning
             response_text = await agent.handle_request(session_id, patient_id, user_input)
+            if not response_text:
+                response_text = "I'm sorry, I couldn't generate a response."
+            
             reasoning_time = (time.time() - start_time) * 1000
             
             # 2. TTS Generation
             tts_model = voice.detect_language_and_model(response_text)
-            
-            first_byte_time = None
+            has_audio = voice.api_key != "placeholder" and bool(voice.api_key)
             
             # Stream audio back
             await websocket.send_json({
                 "type": "text", 
                 "content": response_text,
+                "has_audio": has_audio,
                 "reasoning_ms": round(reasoning_time, 2),
-                "total_ms": round(reasoning_time + 10, 2) # Adding a small simulated network/buffer overhead
+                "total_ms": round(reasoning_time + 10, 2)
             })
 
+            first_byte_time = None
             async for chunk in voice.text_to_speech_stream(response_text, model=tts_model):
                 if first_byte_time is None:
                     first_byte_time = time.time()
