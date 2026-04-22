@@ -1,0 +1,28 @@
+graph TD
+    User((User)) -->|Voice/Text| WS[WebSocket Server - FastAPI]
+    WS -->|Audio Chunks| STT[Deepgram STT]
+    STT -->|Transcript| Agent[LLM Agent - GPT-4o-mini]
+    
+    subgraph Memory
+        Session[Redis Session Context]
+        Persistent[Redis Patient History]
+    end
+    
+    Agent <--> Session
+    Agent <--> Persistent
+    
+    subgraph Tools
+        AppLogic[Appointment Engine]
+        DB[(SQLite/Postgres)]
+    end
+    
+    Agent -->|Tool Call| AppLogic
+    AppLogic --> DB
+    
+    Agent -->|Response Text| TTS[Deepgram TTS - Aura]
+    TTS -->|Audio Stream| WS
+    WS -->|Audio/Metrics| User
+    
+    style WS fill:#4f46e5,color:#fff
+    style Agent fill:#22d3ee,color:#000
+    style Memory fill:#facc15,color:#000

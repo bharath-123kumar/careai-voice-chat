@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+redis
+openai
+deepgram-sdk
+python-dotenv
+sqlalchemy
+psycopg2-binary
+pydantic
+asyncio
+websockets
+langdetect
+aiohttp

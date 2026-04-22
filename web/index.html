@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice AI | Clinical Appointment Booking</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div>
+                <h1 style="font-size: 1.5rem; font-weight: 600;">Clinical Voice AI</h1>
+                <p style="font-size: 0.875rem; color: var(--text-muted);">Real-time multilingual scheduling</p>
+            </div>
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                <span id="conn-status">Systems Ready</span>
+            </div>
+        </header>
+
+        <div class="main-content" id="chat-container">
+            <div class="chat-bubble agent">
+                <p>Hello! I am your clinical assistant. How can I help you today? (English, Hindi, or Tamil)</p>
+            </div>
+        </div>
+
+        <div class="controls" style="gap: 15px; background: rgba(255, 255, 255, 0.05); padding: 20px;">
+            <input type="text" id="text-input" placeholder="Type your message here..." 
+                   style="flex: 1; padding: 15px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: var(--bg); color: white; outline: none;">
+            <button id="send-btn" style="background: var(--primary); border: none; padding: 12px; border-radius: 12px; cursor: pointer;">
+                <i data-lucide="send" color="white" size="24"></i>
+            </button>
+            <button class="mic-button" id="mic-btn" style="width: 60px; height: 60px;">
+                <i data-lucide="mic" color="white" size="24"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+        
+        const chatContainer = document.getElementById('chat-container');
+        const micBtn = document.getElementById('mic-btn');
+        let isRecording = false;
+        let ws;
+
+        // Initialize Webhook
+        function initWebSocket() {
+            ws = new WebSocket(`ws://${window.location.hostname}:8989/ws/voice`);
+            
+            ws.onmessage = async (event) => {
+                if (typeof event.data === 'string') {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'text') {
+                        addMessage(data.content, 'agent', data.reasoning_ms, data.total_ms);
+                        speakText(data.content); // Call TTS
+                    } else if (data.type === 'latency') {
+                        updateLatency(data.total_ms);
+                    }
+                } else {
+                    // Audio binary data
+                    playAudio(event.data);
+                }
+            };
+        }
+
+        function addMessage(text, role, reasoningMs = null, totalMs = null) {
+            const div = document.createElement('div');
+            div.className = `chat-bubble ${role}`;
+            div.innerHTML = `<p>${text}</p>`;
+            
+            if (reasoningMs) {
+                const metrics = document.createElement('div');
+                metrics.className = 'metrics';
+                const totalDisplay = totalMs ? `Total: ${totalMs}ms` : 'Total: --ms';
+                metrics.innerHTML = `<span>Reasoning: ${reasoningMs}ms</span> <span id="total-latency">${totalDisplay}</span>`;
+                div.appendChild(metrics);
+            }
+            
+            chatContainer.appendChild(div);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function updateLatency(ms) {
+            const lastLatency = chatContainer.querySelector('.chat-bubble.agent:last-child #total-latency');
+            if (lastLatency) lastLatency.innerText = `Total: ${ms}ms`;
+        }
+
+        // Web Speech API for Speaking (TTS Fallback)
+        function speakText(text) {
+            if ('speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(text);
+                // Detect language for better voice selection
+                utterance.lang = 'en-IN'; 
+                window.speechSynthesis.speak(utterance);
+            }
+        }
+
+        // Web Audio for playback (Binary chunks)
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        function playAudio(buffer) {
+            audioCtx.decodeAudioData(buffer, (decoded) => {
+                const source = audioCtx.createBufferSource();
+                source.buffer = decoded;
+                source.connect(audioCtx.destination);
+                source.start();
+            });
+        }
+
+        // Web Speech API for Real Mic Input
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = true; // Show results in real-time
+
+            recognition.onstart = () => {
+                isRecording = true;
+                micBtn.classList.add('recording');
+                const status = document.getElementById('conn-status');
+                status.innerText = "Listening...";
+                status.style.color = "#ef4444";
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                if (finalTranscript) {
+                    addMessage(finalTranscript, 'user');
+                    ws.send(JSON.stringify({ text: finalTranscript }));
+                }
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                micBtn.classList.remove('recording');
+                const status = document.getElementById('conn-status');
+                status.innerText = "Systems Ready";
+                status.style.color = "var(--accent)";
+            };
+
+            recognition.onerror = (event) => {
+                console.error("Speech Recognition Error:", event.error);
+                if (event.error === 'not-allowed') {
+                    alert("Mic Access Denied. Please enable microphone permissions in your browser address bar.");
+                } else if (event.error === 'network') {
+                    alert("Network error. Speech recognition requires an internet connection.");
+                }
+            };
+        }
+
+        const textInput = document.getElementById('text-input');
+        const sendBtn = document.getElementById('send-btn');
+
+        function sendManualMessage() {
+            const text = textInput.value.trim();
+            if (text) {
+                addMessage(text, 'user');
+                ws.send(JSON.stringify({ text }));
+                textInput.value = '';
+            }
+        }
+
+        sendBtn.onclick = sendManualMessage;
+        textInput.onkeypress = (e) => {
+            if (e.key === 'Enter') sendManualMessage();
+        };
+
+        micBtn.onclick = () => {
+            if (!recognition) {
+                alert("Speech Recognition not supported in this browser. Try Chrome/Edge.");
+                return;
+            }
+            if (isRecording) {
+                recognition.stop();
+            } else {
+                recognition.lang = 'en-IN'; // Can be changed based on preference
+                recognition.start();
+            }
+        };
+
+        window.onload = initWebSocket;
+    </script>
+</body>
+</html>
